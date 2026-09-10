@@ -1,3 +1,5 @@
+# Por: Manuel Sicajau
+
 import tkinter as tk
 from tkinter import messagebox, ttk
 import numpy as np
@@ -36,7 +38,12 @@ MATRIZ_MAX = 6
 
 
 class CalculadoraMatricesApp:
-    OPERACIONES = ["Suma (+)", "Resta (-)", "Multiplicación (x)", "Inversa (A^-1)"]
+    # Nuevas operaciones agregadas
+    OPERACIONES = [
+        "Suma (+)", "Resta (-)", "Multiplicación (x)",
+        "Inversa (A^-1)", "Determinante (|A|)",
+        "Matriz de cofactores (C)", "Gauss-Jordan"
+    ]
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -200,14 +207,16 @@ class CalculadoraMatricesApp:
         self._limpiar_contenedor(self.scrollable_resultado_frame)
 
     def actualizar_vistas(self, event=None):
-        es_inversa = "Inversa" in self.op_var.get()
-        estado = "disabled" if es_inversa else "normal"
+        op = self.op_var.get()
+        # Se deshabilita la Matriz B si es una operación unitaria
+        es_unitaria = any(x in op for x in ["Inversa", "Determinante", "cofactores", "Gauss-Jordan"])
+        estado = "disabled" if es_unitaria else "normal"
         self.rows_b.config(state=estado)
         self.cols_b.config(state=estado)
         self.construir_grids()
 
     def validar_solo_numeros(self, texto: str) -> bool:
-        if texto == "" or texto.isdigit():
+        if texto == "" or texto.lstrip('-').replace('.', '', 1).isdigit():
             return True
         self.root.bell()
         return False
@@ -239,7 +248,8 @@ class CalculadoraMatricesApp:
         ca = self._obtener_dimension(self.cols_a, "Matriz A - Columnas") or 2
         self.entries_a = self._crear_grilla("Matriz A", ra, ca)
 
-        if "Inversa" not in op:
+        es_unitaria = any(x in op for x in ["Inversa", "Determinante", "cofactores", "Gauss-Jordan"])
+        if not es_unitaria:
             rb = self._obtener_dimension(self.rows_b, "Matriz B - Filas") or 2
             cb = self._obtener_dimension(self.cols_b, "Matriz B - Columnas") or 2
             self.entries_b = self._crear_grilla("Matriz B", rb, cb)
@@ -273,8 +283,15 @@ class CalculadoraMatricesApp:
         op = self.op_var.get()
         try:
             A = self.leer_matriz(self.entries_a)
+            # Enrutamiento de las nuevas operaciones
             if "Inversa" in op:
                 self._calcular_inversa(A)
+            elif "Determinante" in op:
+                self._calcular_determinante(A)
+            elif "cofactores" in op:
+                self._calcular_cofactores(A)
+            elif "Gauss-Jordan" in op:
+                self._calcular_gauss_jordan(A)
             else:
                 B = self.leer_matriz(self.entries_b)
                 self._calcular_binaria(op, A, B)
@@ -290,6 +307,54 @@ class CalculadoraMatricesApp:
             self._mostrar_resultado_matriz(resultado)
         except np.linalg.LinAlgError:
             messagebox.showerror("Error Matemático", "La matriz es singular (determinante 0) y no tiene inversa.")
+
+    def _calcular_determinante(self, A):
+        if A.shape[0] != A.shape[1]:
+            messagebox.showerror("Error de Dimensión", "Para calcular el determinante, la matriz debe ser cuadrada.")
+            return
+        det = np.linalg.det(A)
+        # Se envuelve el resultado en un array 2D para mantener compatibilidad gráfica
+        self._mostrar_resultado_matriz(np.array([[det]]))
+
+    def _calcular_cofactores(self, A):
+        if A.shape[0] != A.shape[1]:
+            messagebox.showerror("Error de Dimensión", "Para la matriz de cofactores, la matriz debe ser cuadrada.")
+            return
+        cofactores = np.zeros_like(A, dtype=float)
+        for i in range(A.shape[0]):
+            for j in range(A.shape[1]):
+                menor = np.delete(np.delete(A, i, 0), j, 1)
+                det_menor = np.linalg.det(menor) if menor.size > 0 else 1
+                cofactores[i, j] = ((-1)**(i+j)) * det_menor
+        self._mostrar_resultado_matriz(cofactores)
+
+    def _calcular_gauss_jordan(self, A):
+        M = A.astype(float)
+        filas, columnas = M.shape
+        lead = 0
+        for r in range(filas):
+            if lead >= columnas:
+                break
+            i = r
+            while M[i, lead] == 0:
+                i += 1
+                if i == filas:
+                    i = r
+                    lead += 1
+                    if lead == columnas:
+                        break
+            if lead < columnas:
+                # Intercambio de filas si es necesario
+                M[[i, r]] = M[[r, i]]
+                lv = M[r, lead]
+                if lv != 0:
+                    M[r] = M[r] / lv
+                for i in range(filas):
+                    if i != r:
+                        lv = M[i, lead]
+                        M[i] = M[i] - lv * M[r]
+            lead += 1
+        self._mostrar_resultado_matriz(M)
 
     def _calcular_binaria(self, op, A, B):
         if "Suma" in op:
@@ -317,10 +382,13 @@ class CalculadoraMatricesApp:
         for i in range(filas):
             for j in range(columnas):
                 val = res[i, j]
+                # Evita notación científica en cero exacto
+                if abs(val) < 1e-10:
+                    val = 0.0
                 val_str = str(int(val)) if val == int(val) else f"{val:.4f}"
 
                 e = tk.Entry(
-                    self.scrollable_resultado_frame, width=6, font=FONT_NORMAL, justify="center",
+                    self.scrollable_resultado_frame, width=8, font=FONT_NORMAL, justify="center",
                     bg=COLOR_RESULTADO_BG, fg=COLOR_RESULTADO_FG, relief="solid", bd=1,
                     state="readonly", readonlybackground=COLOR_RESULTADO_BG
                 )
