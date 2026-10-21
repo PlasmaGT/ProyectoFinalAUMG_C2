@@ -877,6 +877,487 @@ OPERACIONES = [
 OP_POR_CLAVE = {op.clave: op for op in OPERACIONES}
 
 
+# -----------------------------------------------------------------------------
+# Manual de usuario (ventana con el mismo diseño que la calculadora)
+# -----------------------------------------------------------------------------
+OP_INFO = {   # clave -> (qué necesitas, qué verás)
+    "suma": ("Dos matrices del mismo tamaño.",
+             "Cada casilla de A sumada con la casilla de B que está en la misma posición."),
+    "resta": ("Dos matrices del mismo tamaño.",
+              "Cada casilla de A menos la casilla de B que está en la misma posición."),
+    "mult": ("Las columnas de A deben ser igual a las filas de B.",
+             "Cada elemento como suma de productos: fila de A por columna de B."),
+    "inversa": ("Matriz cuadrada con determinante distinto de 0.",
+                "La matriz aumentada [ A | I ], cada operación sobre filas y la comprobación A · A⁻¹ = I."),
+    "det": ("Matriz cuadrada.",
+            "La fórmula directa en 2×2 o el desarrollo por cofactores en matrices mayores."),
+    "cof": ("Matriz cuadrada.",
+            "Los menores, la ley de signos y la matriz de cofactores."),
+    "gauss": ("Una matriz aumentada de n filas y n + 1 columnas.",
+              "Cada operación elemental de filas y la solución: única, infinitas o ninguna."),
+}
+
+
+class ManualUsuario:
+    """Ventana de ayuda: temas a la izquierda y contenido en tarjetas a la derecha."""
+
+    TEMAS_MANUAL = [
+        ("inicio", "Inicio rápido", "1"),
+        ("operaciones", "Operaciones", "2"),
+        ("tamano", "Tamaño de las matrices", "3"),
+        ("numeros", "Números y teclado", "4"),
+        ("resultado", "Leer el resultado", "5"),
+        ("errores", "Si algo sale mal", "6"),
+        ("opciones", "Formato y tema", "7"),
+    ]
+
+    def __init__(self, root, parsear):
+        self.root = root
+        self.parsear = parsear               # función que convierte el texto de una celda en número
+        self.actual = None
+        self._wrap_labels: list[tuple[tk.Label, int]] = []
+        self._ancho = 700
+
+        v = self.ventana = tk.Toplevel(root)
+        v.title("Manual de usuario")
+        v.geometry(f"1040x720+{root.winfo_rootx() + 60}+{root.winfo_rooty() + 40}")
+        v.minsize(820, 560)
+        v.configure(bg=T.BG)
+        v.bind("<Escape>", lambda e: self.cerrar())
+
+        cont = tk.Frame(v, bg=T.BG)
+        cont.pack(fill="both", expand=True)
+        barra = tk.Frame(cont, bg=T.SUPERFICIE, width=256)
+        barra.pack(side="left", fill="y")
+        barra.pack_propagate(False)
+        tk.Frame(cont, bg=T.BORDE, width=1).pack(side="left", fill="y")
+
+        lateral = tk.Frame(barra, bg=T.SUPERFICIE)
+        lateral.pack(fill="both", expand=True, padx=20, pady=(26, 20))
+        tk.Label(lateral, text="Manual", font=F["marca"], bg=T.SUPERFICIE, fg=T.TEXTO,
+                 anchor="w").pack(fill="x")
+        tk.Label(lateral, text="Guía de la calculadora", font=F["peq"], bg=T.SUPERFICIE,
+                 fg=T.TEXTO_2, anchor="w").pack(fill="x")
+        tk.Label(lateral, text="TEMAS", font=F["seccion"], bg=T.SUPERFICIE, fg=T.TEXTO_3,
+                 anchor="w").pack(fill="x", pady=(22, 8))
+        self.items = {clave: self._crear_item(lateral, clave, titulo, simbolo)
+                      for clave, titulo, simbolo in self.TEMAS_MANUAL}
+        tk.Label(lateral, text="Esc para cerrar", font=F["peq"], bg=T.SUPERFICIE,
+                 fg=T.TEXTO_3, anchor="w").pack(fill="x", pady=(24, 0))
+
+        self.scroll = ScrollFrame(cont, T.BG, horizontal=False, on_resize=self._ajustar)
+        self.scroll.pack(side="left", fill="both", expand=True)
+        self.pagina = tk.Frame(self.scroll.inner, bg=T.BG)
+        self.pagina.pack(fill="both", expand=True, padx=36, pady=(30, 30))
+        self._ir("inicio")
+
+    # ------------------------------------------------------------------ ventana
+    def existe(self) -> bool:
+        return bool(self.ventana.winfo_exists())
+
+    def mostrar(self):
+        self.ventana.lift()
+        self.ventana.focus_force()
+
+    def cerrar(self):
+        if self.existe():
+            self.ventana.destroy()
+
+    # ----------------------------------------------------------- barra de temas
+    def _crear_item(self, parent, clave, titulo, simbolo):
+        fila = tk.Frame(parent, bg=T.SUPERFICIE, cursor="hand2")
+        fila.pack(fill="x", pady=1)
+        barra = tk.Frame(fila, bg=T.SUPERFICIE, width=3)
+        barra.pack(side="left", fill="y")
+        sim = tk.Label(fila, text=simbolo, width=3, font=F["ui_b"], bg=T.SUPERFICIE, fg=T.TEXTO_2,
+                       pady=8, cursor="hand2")
+        sim.pack(side="left")
+        nom = tk.Label(fila, text=titulo, font=F["ui"], bg=T.SUPERFICIE, fg=T.TEXTO, anchor="w",
+                       cursor="hand2")
+        nom.pack(side="left", fill="x", expand=True)
+        partes = (fila, barra, sim, nom)
+        for w in partes:
+            w.bind("<Button-1>", lambda e, c=clave: self._ir(c))
+            w.bind("<Enter>", lambda e, c=clave: self._estilo_item(c, hover=True))
+            w.bind("<Leave>", lambda e, c=clave: self._estilo_item(c))
+        return partes
+
+    def _estilo_item(self, clave, hover=False):
+        fila, barra, sim, nom = self.items[clave]
+        if clave == self.actual:
+            bg, bg_barra, fg_s, fg_n = T.ACENTO_SUAVE, T.ACENTO, T.ACENTO_TEXTO, T.ACENTO_TEXTO
+        else:
+            bg = T.HOVER if hover else T.SUPERFICIE
+            bg_barra, fg_s, fg_n = bg, T.TEXTO_2, T.TEXTO
+        fila.configure(bg=bg)
+        barra.configure(bg=bg_barra)
+        sim.configure(bg=bg, fg=fg_s)
+        nom.configure(bg=bg, fg=fg_n, font=F["ui_b"] if clave == self.actual else F["ui"])
+
+    # ---------------------------------------------------------------- navegación
+    def _ir(self, clave):
+        self.actual = clave
+        for k in self.items:
+            self._estilo_item(k)
+        for w in self.pagina.winfo_children():
+            w.destroy()
+        self._wrap_labels = []
+        getattr(self, "_pagina_" + clave)()
+        self._pie_navegacion(clave)
+        self.scroll.canvas.yview_moveto(0)
+
+    def _pie_navegacion(self, clave):
+        claves = [c for c, _, _ in self.TEMAS_MANUAL]
+        i = claves.index(clave)
+        pie = tk.Frame(self.pagina, bg=T.BG)
+        pie.pack(fill="x", pady=(8, 0))
+        if i > 0:
+            Boton(pie, "←  Anterior", lambda: self._ir(claves[i - 1]), "secundario").pack(side="left")
+        if i < len(claves) - 1:
+            Boton(pie, "Siguiente  →", lambda: self._ir(claves[i + 1]), "primario").pack(side="right")
+        else:
+            Boton(pie, "Cerrar manual", self.cerrar, "primario").pack(side="right")
+
+    def _ajustar(self, ancho_vista):
+        self._ancho = ancho_vista - 72 - 52          # márgenes de la página y de la tarjeta
+        self._wrap_labels = [(l, e) for l, e in self._wrap_labels if l.winfo_exists()]
+        for lbl, extra in self._wrap_labels:
+            lbl.configure(wraplength=max(260, self._ancho - extra))
+
+    # ------------------------------------------------------------ piezas visuales
+    def _tarjeta(self, parent, pady=(0, 16)):
+        externa = tk.Frame(parent, bg=T.SUPERFICIE, highlightthickness=1,
+                           highlightbackground=T.BORDE, highlightcolor=T.BORDE)
+        externa.pack(fill="x", pady=pady)
+        interna = tk.Frame(externa, bg=T.SUPERFICIE)
+        interna.pack(fill="both", expand=True, padx=24, pady=20)
+        return interna
+
+    def _texto(self, parent, texto, fuente, fg, bg=None, extra=0, **pack):
+        lbl = tk.Label(parent, text=texto, font=fuente, fg=fg, bg=bg or T.SUPERFICIE, anchor="w",
+                       justify="left", wraplength=max(260, self._ancho - extra))
+        lbl.pack(anchor="w", **pack)
+        self._wrap_labels.append((lbl, extra))
+        return lbl
+
+    def _encabezado(self, titulo, subtitulo):
+        tk.Label(self.pagina, text=titulo, font=F["h1"], bg=T.BG, fg=T.TEXTO, anchor="w").pack(fill="x")
+        lbl = tk.Label(self.pagina, text=subtitulo, font=F["ui"], bg=T.BG, fg=T.TEXTO_2, anchor="w",
+                       justify="left", wraplength=max(260, self._ancho))
+        lbl.pack(fill="x", pady=(4, 20))
+        self._wrap_labels.append((lbl, -52))
+
+    def _seccion(self, parent, texto):
+        tk.Label(parent, text=texto, font=F["seccion"], bg=T.SUPERFICIE, fg=T.TEXTO_3,
+                 anchor="w").pack(fill="x", pady=(0, 12))
+
+    def _insignia(self, parent, numero):
+        c = tk.Canvas(parent, width=28, height=28, bg=T.SUPERFICIE, highlightthickness=0)
+        c.create_oval(1, 1, 27, 27, fill=T.ACENTO_SUAVE, outline="")
+        c.create_text(14, 14, text=str(numero), font=F["peq_b"], fill=T.ACENTO_TEXTO)
+        return c
+
+    def _pasos(self, parent, pasos):
+        """Lista numerada (igual que el procedimiento de la calculadora)."""
+        for i, (titulo, texto) in enumerate(pasos, 1):
+            if i > 1:
+                tk.Frame(parent, bg=T.BORDE, height=1).pack(fill="x", pady=(14, 0))
+            fila = tk.Frame(parent, bg=T.SUPERFICIE)
+            fila.pack(fill="x", pady=(14, 0))
+            self._insignia(fila, i).pack(side="left", anchor="n", padx=(0, 14))
+            cuerpo = tk.Frame(fila, bg=T.SUPERFICIE)
+            cuerpo.pack(side="left", fill="x", expand=True)
+            tk.Label(cuerpo, text=titulo, font=F["ui_b"], bg=T.SUPERFICIE, fg=T.TEXTO,
+                     anchor="w").pack(fill="x", pady=(3, 0))
+            self._texto(cuerpo, texto, F["ui"], T.TEXTO_2, extra=42, pady=(4, 0))
+
+    def _tecla(self, parent, texto):
+        return tk.Label(parent, text=texto, font=F["mono_s"], bg=T.HOVER, fg=T.TEXTO, padx=9, pady=3,
+                        highlightthickness=1, highlightbackground=T.BORDE)
+
+    def _chip(self, parent, texto, ancho=None):
+        return tk.Label(parent, text=texto, font=F["mono"], bg=T.ACENTO_SUAVE, fg=T.ACENTO_TEXTO,
+                        padx=10, pady=4, width=ancho or 0)
+
+    def _fila_chip(self, parent, chip, texto, ancho_chip=None):
+        fila = tk.Frame(parent, bg=T.SUPERFICIE)
+        fila.pack(fill="x", pady=(0, 10))
+        self._chip(fila, chip, ancho_chip).pack(side="left", anchor="n", padx=(0, 16))
+        self._texto(fila, texto, F["ui"], T.TEXTO_2, extra=170, pady=(3, 0))
+
+    def _fila_tecla(self, parent, tecla, texto):
+        fila = tk.Frame(parent, bg=T.SUPERFICIE)
+        fila.pack(fill="x", pady=(0, 10))
+        self._tecla(fila, tecla).pack(side="left", anchor="n", padx=(0, 16))
+        self._texto(fila, texto, F["ui"], T.TEXTO_2, extra=170, pady=(2, 0))
+
+    # ======================================================================= páginas
+    def _pagina_inicio(self):
+        self._encabezado("Empieza en 4 pasos",
+                         "La calculadora te da el resultado y también cómo se llega a él, paso a paso.")
+        card = self._tarjeta(self.pagina)
+        self._pasos(card, [
+            ("Elige la operación",
+             "En la barra lateral, sección OPERACIÓN. La que está seleccionada se marca en azul."),
+            ("Define el tamaño",
+             "En TAMAÑO elige un tamaño rápido (3×3, 4×4, 5×5 o 6×6) o «Libre» y usa − y + para "
+             "cambiar las filas y las columnas."),
+            ("Escribe los valores",
+             "Haz clic en una celda y escribe. Con Enter pasas a la siguiente. Puedes usar enteros, "
+             "decimales (2.5) o fracciones (3/4)."),
+            ("Pulsa Calcular",
+             "Arriba aparece el RESULTADO y debajo el PROCEDIMIENTO. Atajo de teclado: Ctrl + Enter."),
+        ])
+
+        mapa = self._tarjeta(self.pagina)
+        self._seccion(mapa, "MAPA DE LA PANTALLA")
+        self._esquema(mapa)
+        tk.Frame(mapa, bg=T.SUPERFICIE, height=8).pack()
+        self._pasos(mapa, [
+            ("Barra lateral", "Elige la operación, el tamaño, el formato de números y el tema."),
+            ("Datos", "Aquí escribes las matrices. Los botones Ejemplo y Limpiar te ayudan a empezar."),
+            ("Resultado", "La respuesta final. El botón Copiar la lleva al portapapeles."),
+            ("Procedimiento", "Cada paso numerado, con su explicación y la matriz resultante."),
+        ])
+
+    def _esquema(self, parent):
+        """Dibujo simplificado de la ventana principal, con zonas numeradas."""
+        c = tk.Canvas(parent, width=660, height=292, bg=T.BG, highlightthickness=0, bd=0)
+        c.pack(anchor="w")
+        # barra lateral
+        c.create_rectangle(4, 4, 176, 288, fill=T.SUPERFICIE, outline=T.BORDE)
+        c.create_text(16, 20, text="Matrices", anchor="w", font=F["ui_b"], fill=T.TEXTO)
+        for i, op in enumerate(OPERACIONES):
+            y = 38 + i * 18
+            if i == 0:
+                c.create_rectangle(12, y, 168, y + 15, fill=T.ACENTO_SUAVE, outline="")
+                c.create_rectangle(12, y, 15, y + 15, fill=T.ACENTO, outline="")
+            c.create_text(26, y + 8, text=op.nombre, anchor="w", font=F["peq"],
+                          fill=T.ACENTO_TEXTO if i == 0 else T.TEXTO_2)
+        c.create_text(14, 178, text="TAMAÑO", anchor="w", font=F["seccion"], fill=T.TEXTO_3)
+        c.create_rectangle(12, 190, 168, 210, fill=T.SEGMENTO, outline="")
+        c.create_rectangle(14, 192, 52, 208, fill=T.SEG_ACTIVO, outline="")
+        for y in (222, 244):
+            c.create_rectangle(12, y, 168, y + 16, fill=T.CAMPO, outline=T.BORDE)
+        # tarjeta de datos
+        c.create_rectangle(188, 4, 636, 134, fill=T.SUPERFICIE, outline=T.BORDE)
+        c.create_text(200, 18, text="DATOS", anchor="w", font=F["seccion"], fill=T.TEXTO_3)
+        for x0 in (204, 328):
+            for r in range(3):
+                for q in range(3):
+                    x, y = x0 + q * 22, 34 + r * 20
+                    c.create_rectangle(x, y, x + 20, y + 16, fill=T.CAMPO, outline=T.BORDE)
+        c.create_text(300, 62, text="+", font=F["h2"], fill=T.TEXTO_3)
+        c.create_rectangle(204, 100, 284, 124, fill=T.ACENTO, outline="")
+        c.create_text(244, 112, text="Calcular", font=F["peq_b"], fill="#FFFFFF")
+        # resultado
+        c.create_rectangle(188, 142, 636, 196, fill=T.SUPERFICIE, outline=T.BORDE)
+        c.create_text(200, 156, text="RESULTADO", anchor="w", font=F["seccion"], fill=T.TEXTO_3)
+        c.create_rectangle(200, 166, 330, 188, fill=T.ACENTO_SUAVE, outline="")
+        c.create_text(265, 177, text="Resultado", font=F["peq_b"], fill=T.ACENTO_TEXTO)
+        # procedimiento
+        c.create_rectangle(188, 204, 636, 288, fill=T.SUPERFICIE, outline=T.BORDE)
+        c.create_text(200, 218, text="PROCEDIMIENTO", anchor="w", font=F["seccion"], fill=T.TEXTO_3)
+        for numero, cy in ((1, 241), (2, 266)):
+            c.create_oval(203, cy - 9, 221, cy + 9, fill=T.ACENTO_SUAVE, outline="")
+            c.create_text(212, cy, text=str(numero), font=F["peq_b"], fill=T.ACENTO_TEXTO)
+            c.create_rectangle(232, cy - 6, 440, cy - 1, fill=T.BORDE, outline="")
+            c.create_rectangle(232, cy + 3, 360, cy + 7, fill=T.BORDE, outline="")
+        # marcadores
+        for numero, (x, y) in enumerate(((176, 16), (630, 14), (630, 152), (630, 214)), 1):
+            c.create_oval(x - 10, y - 10, x + 10, y + 10, fill=T.ACENTO, outline=T.BG, width=2)
+            c.create_text(x, y, text=str(numero), font=F["peq_b"], fill="#FFFFFF")
+
+    def _pagina_operaciones(self):
+        self._encabezado("Qué hace cada operación",
+                         "Elígela en la lista OPERACIÓN. Todas muestran su procedimiento completo.")
+        for op in OPERACIONES:
+            card = self._tarjeta(self.pagina, pady=(0, 12))
+            fila = tk.Frame(card, bg=T.SUPERFICIE)
+            fila.pack(fill="x")
+            tk.Label(fila, text=op.simbolo, width=5, font=F["h2"], bg=T.ACENTO_SUAVE, fg=T.ACENTO_TEXTO,
+                     pady=10).pack(side="left", anchor="n", padx=(0, 18))
+            cuerpo = tk.Frame(fila, bg=T.SUPERFICIE)
+            cuerpo.pack(side="left", fill="x", expand=True)
+            tk.Label(cuerpo, text=op.nombre, font=F["h2"], bg=T.SUPERFICIE, fg=T.TEXTO,
+                     anchor="w").pack(fill="x")
+            self._texto(cuerpo, op.ayuda, F["ui"], T.TEXTO_2, extra=110, pady=(4, 8))
+            necesitas, veras = OP_INFO[op.clave]
+            for etiqueta, texto in (("NECESITAS", necesitas), ("VERÁS", veras)):
+                linea = tk.Frame(cuerpo, bg=T.SUPERFICIE)
+                linea.pack(fill="x", pady=(0, 4))
+                tk.Label(linea, text=etiqueta, width=10, font=F["seccion"], bg=T.SUPERFICIE,
+                         fg=T.TEXTO_3, anchor="w").pack(side="left", anchor="n", pady=(2, 0))
+                self._texto(linea, texto, F["ui"], T.TEXTO, extra=210)
+
+    def _pagina_tamano(self):
+        self._encabezado("Tamaño de las matrices",
+                         "La sección TAMAÑO de la barra lateral ajusta las dimensiones por ti.")
+        card = self._tarjeta(self.pagina)
+        self._seccion(card, "TAMAÑO RÁPIDO O LIBRE")
+        self._fila_chip(card, "3×3 … 6×6",
+                        "Todas las matrices se ajustan solas al tamaño elegido. En Gauss-Jordan, la matriz A "
+                        "queda de n filas y n + 1 columnas.", 10)
+        self._fila_chip(card, "Libre",
+                        "Tú eliges las filas y las columnas con los botones − y +. Máximo 8 filas "
+                        "(y 9 columnas en Gauss-Jordan).", 10)
+
+        reglas = self._tarjeta(self.pagina)
+        self._seccion(reglas, "REGLAS SEGÚN LA OPERACIÓN")
+        self._fila_chip(reglas, "+   −", "B toma el mismo tamaño que A.", 10)
+        self._fila_chip(reglas, "×", "Las filas de B se igualan a las columnas de A. Las columnas de B las "
+                                     "eliges tú.", 10)
+        self._fila_chip(reglas, "A⁻¹  |A|  C", "La matriz debe ser cuadrada: las columnas siguen a las filas.", 10)
+        self._fila_chip(reglas, "GJ", "Las columnas son las filas más 1: la última columna contiene los "
+                                      "términos independientes.", 10)
+        self._texto(reglas, "Los contadores que la operación controla aparecen atenuados. Al cambiar el "
+                            "tamaño, los valores que ya escribiste se conservan.",
+                    F["ui"], T.TEXTO_3, pady=(4, 0))
+
+    def _pagina_numeros(self):
+        self._encabezado("Números y teclado",
+                         "Escribe los valores como prefieras. Todo se calcula con fracciones exactas.")
+        formatos = self._tarjeta(self.pagina)
+        self._seccion(formatos, "FORMATOS ACEPTADOS")
+        for ejemplo, texto in (("3   -2", "Números enteros, positivos o negativos."),
+                               ("2.5   2,5", "Decimales, con punto o con coma."),
+                               ("3/4", "Fracciones. Se calculan sin errores de redondeo."),
+                               ("(vacía)", "Una celda vacía cuenta como 0.")):
+            self._fila_chip(formatos, ejemplo, texto, 10)
+
+        prueba = self._tarjeta(self.pagina)
+        self._seccion(prueba, "PRUÉBALO AQUÍ")
+        entrada = tk.Entry(prueba, width=14, font=F["mono"], justify="center", relief="flat", bd=0,
+                           fg=T.TEXTO, bg=T.CAMPO, insertbackground=T.TEXTO, highlightthickness=1,
+                           highlightbackground=T.BORDE, highlightcolor=T.ACENTO)
+        entrada.pack(anchor="w", ipady=6)
+        salida = tk.Label(prueba, font=F["ui_b"], bg=T.SUPERFICIE, anchor="w")
+        salida.pack(anchor="w", pady=(10, 0))
+
+        def evaluar(_evento=None):
+            texto = entrada.get()
+            try:
+                valor = self.parsear(texto)
+            except (ValueError, ZeroDivisionError):
+                salida.configure(text="✕  No es un número válido: en la calculadora la celda se marcaría en rojo",
+                                 fg=T.ERROR)
+                return
+            exacto, decimal = Motor().fmt(valor), Motor(True).fmt(valor)
+            extra = "   (celda vacía = 0)" if not texto.strip() else (
+                f"   (≈ {decimal})" if exacto != decimal else "")
+            salida.configure(text=f"✓  Se calcula como {exacto}{extra}", fg=T.ACENTO_TEXTO)
+
+        entrada.insert(0, "3/4")
+        entrada.bind("<KeyRelease>", evaluar)
+        evaluar()
+
+        teclado = self._tarjeta(self.pagina)
+        self._seccion(teclado, "TECLADO Y BOTONES")
+        for tecla, texto in (("Enter", "Pasa a la celda siguiente."),
+                             ("↑   ↓", "Se mueve entre las filas de una misma columna."),
+                             ("Ctrl + Enter", "Calcula, sin soltar el teclado."),
+                             ("F1", "Abre este manual."),
+                             ("Ejemplo", "Rellena las matrices con números de prueba."),
+                             ("Limpiar", "Pone todas las celdas en 0.")):
+            self._fila_tecla(teclado, tecla, texto)
+
+    def _pagina_resultado(self):
+        self._encabezado("Leer el resultado",
+                         "Debajo de los datos aparecen dos tarjetas: el resultado y el procedimiento.")
+        card = self._tarjeta(self.pagina)
+        self._pasos(card, [
+            ("Resultado",
+             "La respuesta final: una matriz, un valor (como el determinante) o la solución de un sistema. "
+             "El botón Copiar la deja lista para pegar en Excel u otro programa."),
+            ("Procedimiento",
+             "Cada paso lleva un número, un título, una explicación y la matriz que resulta. "
+             "Léelos en orden: así ves cómo se llega a la respuesta."),
+        ])
+
+        leyenda = self._tarjeta(self.pagina)
+        self._seccion(leyenda, "COLORES Y SÍMBOLOS DE LAS MATRICES")
+        MatrizVista(leyenda, [["1", "2", "5"], ["0", "1", "3"]], bg=T.SUPERFICIE, resaltar=(1,),
+                    pivote=(1, 1), separador=2).pack(anchor="w", pady=(0, 14))
+        for color, texto in ((T.FILA, "Amarillo: la fila que cambió en ese paso."),
+                             (T.PIVOTE, "Azul: el pivote, el número con el que se trabaja en Gauss-Jordan."),
+                             (None, "Línea punteada: separa la matriz de los términos independientes o de la "
+                                    "identidad en una matriz aumentada.")):
+            fila = tk.Frame(leyenda, bg=T.SUPERFICIE)
+            fila.pack(fill="x", pady=(0, 8))
+            if color:
+                tk.Frame(fila, bg=color, width=26, height=16, highlightthickness=1,
+                         highlightbackground=T.BORDE).pack(side="left", anchor="n", padx=(0, 14), pady=2)
+            else:
+                guia = tk.Canvas(fila, width=26, height=20, bg=T.SUPERFICIE, highlightthickness=0)
+                guia.create_line(13, 1, 13, 19, fill=T.TEXTO_3, dash=(3, 3))
+                guia.pack(side="left", anchor="n", padx=(0, 14))
+            self._texto(fila, texto, F["ui"], T.TEXTO_2, extra=70, pady=(2, 0))
+
+    def _pagina_errores(self):
+        self._encabezado("Si algo sale mal",
+                         "La calculadora avisa con un mensaje claro y no se cierra. Estos son los más comunes.")
+        casos = (
+            ("Hay un valor que no es un número", True,
+             "Una celda tiene letras, símbolos o una fracción con denominador 0.",
+             "Busca la celda marcada en rojo, corrígela y vuelve a calcular."),
+            ("La matriz no tiene inversa", True,
+             "Su determinante es 0 (matriz singular).",
+             "Cambia algún valor o calcula el determinante para confirmarlo."),
+            ("Sistema sin solución", False,
+             "En Gauss-Jordan, una fila quedó como 0 = c con c distinto de 0.",
+             "Las ecuaciones se contradicen. Revisa los datos del sistema."),
+            ("Infinitas soluciones", False,
+             "En Gauss-Jordan sobran variables: algunas quedan libres.",
+             "La solución se escribe en función de las variables libres."),
+        )
+        for titulo, es_error, causa, solucion in casos:
+            bg = T.ERROR_SUAVE if es_error else T.SUPERFICIE
+            borde = T.ERROR_BORDE if es_error else T.BORDE
+            externa = tk.Frame(self.pagina, bg=bg, highlightthickness=1, highlightbackground=borde)
+            externa.pack(fill="x", pady=(0, 12))
+            interna = tk.Frame(externa, bg=bg)
+            interna.pack(fill="x", padx=24, pady=18)
+            tk.Label(interna, text=titulo, font=F["ui_b"], bg=bg, fg=T.ERROR if es_error else T.ACENTO_TEXTO,
+                     anchor="w").pack(fill="x")
+            self._texto(interna, causa, F["ui"], T.TEXTO, bg=bg, pady=(6, 0))
+            self._texto(interna, "Qué hacer: " + solucion, F["ui"], T.TEXTO_2, bg=bg, pady=(4, 0))
+
+    def _pagina_opciones(self):
+        self._encabezado("Formato y tema",
+                         "Dos ajustes de la barra lateral para dejar la calculadora a tu gusto.")
+        formato = self._tarjeta(self.pagina)
+        self._seccion(formato, "FORMATO DE NÚMEROS")
+        self._texto(formato, "Fracciones muestra los resultados exactos. Decimales los redondea a 4 cifras. "
+                             "Si ya calculaste algo, el resultado se actualiza al cambiar. Pruébalo:",
+                    F["ui"], T.TEXTO_2, pady=(0, 14))
+        muestra = tk.Frame(formato, bg=T.SUPERFICIE)
+
+        def actualizar(decimales):
+            motor = Motor(decimales)
+            for w in muestra.winfo_children():
+                w.destroy()
+            valores = [[Fraction(1, 3), Fraction(5, 2)], [Fraction(-2), Fraction(3, 4)]]
+            MatrizVista(muestra, [[motor.fmt(x) for x in fila] for fila in valores],
+                        bg=T.SUPERFICIE).pack(anchor="w")
+
+        Segmentado(formato, [(False, "Fracciones"), (True, "Decimales")], False,
+                   actualizar).pack(anchor="w", pady=(0, 14))
+        muestra.pack(anchor="w")
+        actualizar(False)
+
+        tema = self._tarjeta(self.pagina)
+        self._seccion(tema, "TEMA")
+        self._texto(tema, "Elige Claro u Oscuro en la sección TEMA de la barra lateral. El cambio es "
+                          "inmediato y conserva tus datos y tu resultado. Este manual también cambia de color.",
+                    F["ui"], T.TEXTO_2)
+
+        resto = self._tarjeta(self.pagina)
+        self._seccion(resto, "AYUDA")
+        self._fila_tecla(resto, "F1", "Abre este manual en cualquier momento.")
+        self._fila_tecla(resto, "Manual", "El botón «Manual de usuario» está al final de la barra lateral.")
+
+
+
 class EntradaInvalida(Exception):
     def __init__(self, entrada, nombre, fila, col):
         super().__init__("Valor no válido")
@@ -908,9 +1389,11 @@ class CalculadoraMatricesApp:
         self._texto_copia = ""
         self._wrap_labels: list[tk.Label] = []
         self._wrap = 700
+        self._manual: ManualUsuario | None = None
 
         self._construir_ui()
         root.bind("<Control-Return>", lambda e: self.calcular())
+        root.bind("<F1>", lambda e: self.abrir_manual())
         self._cambio_estructura()
 
     # ------------------------------------------------------------------ estilos
@@ -1004,6 +1487,10 @@ class CalculadoraMatricesApp:
         self._seccion(cuerpo, "TEMA")
         Segmentado(cuerpo, [("claro", "Claro"), ("oscuro", "Oscuro")], self.tema,
                    self._tema_cambiado).pack(fill="x")
+
+        # --- Ayuda
+        self._seccion(cuerpo, "AYUDA")
+        Boton(cuerpo, "Manual de usuario", self.abrir_manual, "secundario", pady=7).pack(fill="x")
 
     def _crear_contador(self, parent, texto, clave):
         c = Contador(parent, texto, self.dims[clave], 1, MATRIZ_MAX,
@@ -1112,6 +1599,9 @@ class CalculadoraMatricesApp:
         if self.entradas_b:
             self._cache["B"] = self._valores(self.entradas_b)
         ultimo = self._ultimo
+        reabrir_manual = self._manual is not None and self._manual.existe()
+        if reabrir_manual:
+            self._manual.cerrar()
         self.tema = nombre
         T.aplicar(nombre)
         self.root.configure(bg=T.BG)
@@ -1123,6 +1613,8 @@ class CalculadoraMatricesApp:
         if ultimo:
             self._ultimo = ultimo
             self._resolver_y_mostrar()
+        if reabrir_manual:
+            self.abrir_manual()
 
     def _cambio_estructura(self):
         self._aplicar_reglas()
@@ -1424,6 +1916,13 @@ class CalculadoraMatricesApp:
             self._vista_matriz(cuerpo, paso).pack(anchor="w", pady=(10, 0))
         if paso.nota:
             self._texto(cuerpo, paso.nota, F["mono_s"], T.TEXTO).pack(anchor="w", pady=(10, 0))
+
+    def abrir_manual(self):
+        """Abre el manual de usuario (también con F1). Si ya está abierto, lo trae al frente."""
+        if self._manual is not None and self._manual.existe():
+            self._manual.mostrar()
+            return
+        self._manual = ManualUsuario(self.root, self._parsear)
 
     def _copiar(self):
         self.root.clipboard_clear()
