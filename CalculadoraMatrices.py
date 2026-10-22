@@ -1355,6 +1355,8 @@ class ManualUsuario:
         self._seccion(resto, "AYUDA")
         self._fila_tecla(resto, "F1", "Abre este manual en cualquier momento.")
         self._fila_tecla(resto, "Manual", "El botón «Manual de usuario» está al final de la barra lateral.")
+        self._fila_tecla(resto, "Restablecer", "El botón «Restablecer todo» devuelve la calculadora a como "
+                                               "estaba al abrirla. Pide confirmación con un segundo clic.")
 
 
 
@@ -1390,6 +1392,8 @@ class CalculadoraMatricesApp:
         self._wrap_labels: list[tk.Label] = []
         self._wrap = 700
         self._manual: ManualUsuario | None = None
+        self._confirmando = False            # el botón «Restablecer todo» espera un segundo clic
+        self._id_confirmacion = None
 
         self._construir_ui()
         root.bind("<Control-Return>", lambda e: self.calcular())
@@ -1487,6 +1491,12 @@ class CalculadoraMatricesApp:
         self._seccion(cuerpo, "TEMA")
         Segmentado(cuerpo, [("claro", "Claro"), ("oscuro", "Oscuro")], self.tema,
                    self._tema_cambiado).pack(fill="x")
+
+        # --- Restablecer
+        self._seccion(cuerpo, "RESTABLECER")
+        self._confirmando = False
+        self.btn_restablecer = Boton(cuerpo, "Restablecer todo", self._pedir_restablecer, "secundario", pady=7)
+        self.btn_restablecer.pack(fill="x")
 
         # --- Ayuda
         self._seccion(cuerpo, "AYUDA")
@@ -1916,6 +1926,53 @@ class CalculadoraMatricesApp:
             self._vista_matriz(cuerpo, paso).pack(anchor="w", pady=(10, 0))
         if paso.nota:
             self._texto(cuerpo, paso.nota, F["mono_s"], T.TEXTO).pack(anchor="w", pady=(10, 0))
+
+    def _pedir_restablecer(self):
+        """Primer clic: pide confirmación. Segundo clic (en 3 s): restablece."""
+        if self._confirmando:
+            self._cancelar_confirmacion()
+            self.restablecer()
+            return
+        self._confirmando = True
+        self.btn_restablecer.set_texto("¿Seguro? Pulsa de nuevo")
+        self._id_confirmacion = self.root.after(3000, self._cancelar_confirmacion)
+
+    def _cancelar_confirmacion(self):
+        if self._id_confirmacion is not None:
+            try:
+                self.root.after_cancel(self._id_confirmacion)
+            except tk.TclError:
+                pass
+            self._id_confirmacion = None
+        self._confirmando = False
+        if self.btn_restablecer.winfo_exists():
+            self.btn_restablecer.set_texto("Restablecer todo")
+
+    def restablecer(self):
+        """Deja la calculadora exactamente como al abrirla: operación, tamaño, valores,
+        formato de números, tema, resultados y posición del scroll."""
+        reabrir_manual = self._manual is not None and self._manual.existe()
+        if reabrir_manual:
+            self._manual.cerrar()
+        self.tema = "oscuro"
+        T.aplicar(self.tema)
+        self.root.configure(bg=T.BG)
+        self._estilos_ttk()
+
+        self.op = "suma"
+        self.preset = None
+        self.dims = {"ra": 2, "ca": 2, "rb": 2, "cb": 2}
+        self.motor.decimales = False
+        self._cache = {"A": [], "B": []}
+        self.entradas_a, self.entradas_b = [], []
+        self._ultimo = None
+        self._texto_copia = ""
+
+        self._cont.destroy()
+        self._construir_ui()
+        self._cambio_estructura()
+        if reabrir_manual:
+            self.abrir_manual()
 
     def abrir_manual(self):
         """Abre el manual de usuario (también con F1). Si ya está abierto, lo trae al frente."""
